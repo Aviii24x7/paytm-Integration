@@ -10,7 +10,7 @@
     </head>
     <body>
         <form method="POST">
-            {% csrf_token %}
+        {% csrf_token %}
         {% for form in form %}
         {{form.label_tag}}
         {{form}}
@@ -18,7 +18,7 @@
 
         
         {% endfor %}
-        <button>POST</button>
+        <button type="submit">POST</button>
         </form>
         <script src="" async defer></script>
     </body>

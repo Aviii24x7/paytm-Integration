@@ -3,12 +3,13 @@ from .models import User
 from .forms import UserForm
 from payToMe.settings import PAYTM_MERCHANT_ID, PAYTM_MERCHANT_KEY
 from django.views.decorators.csrf import csrf_exempt
-from django.http import HttpResponse
+from rest_framework.status import HTTP_200_OK
+from django.http.response import JsonResponse
 
 import requests
 import json
 import base64
-from payApp import PaytmChecksum
+from paytmchecksum import PaytmChecksum
 
 # import checksum generation utility
 # You can get this utility from https://developer.paytm.com/docs/checksum/
@@ -33,52 +34,56 @@ def starting_page(request):
 
         # instobj=User.objects.last()
         order_id=generate_id()
-        print(order_id)
+        print("\n\n\n==========ORDER ID IS"+ order_id)
         paytmParams = dict()
 
         paytmParams["body"] = {
             "requestType"   : "Payment",
             "mid"           : PAYTM_MERCHANT_ID,
             "websiteName"   : "WEBSTAGING",
-            "orderId"       : str(order_id),
-            "callbackUrl"   : "https/127.0.0.1:8000/handle-request/",
+            "orderId"       : order_id,
+            "callbackUrl"   : "http://127.0.0.1:8000/handle-request",
             "txnAmount"     : {
-                "value"     : str(amount),
+                "value"     : "1.00",
                 "currency"  : "INR",
             },
             "userInfo"      : {
-                "custId"    : str(email) ,
+                "custId"    : email,
             },
         }
 
+        # Generate checksum by parameters we have in body
+        # Find your Merchant Key in your Paytm Dashboard at https://dashboard.paytm.com/next/apikeys 
         checksum = PaytmChecksum.generateSignature(json.dumps(paytmParams["body"]), PAYTM_MERCHANT_KEY)
-
-        # head parameters
+    
+        print("\n\n\n============CHECKSUM IS: " + checksum)
         paytmParams["head"] = {
-
-            # put generated checksum value here
-            "signature"	: checksum
+            "signature"    : checksum
         }
-        
-                
+        print("\n\n\n-----------PAYTMPARAMS IS: ")
+        print(paytmParams)
 
-        # for Staging
-        url = f"https://securegw-stage.paytm.in/theia/api/v1/initiateTransaction?mid={PAYTM_MERCHANT_ID}&orderId={order_id}"
         post_data = json.dumps(paytmParams)
 
+        print("\n\n\n-----------POSTDATA IS: ")
+        print(post_data)
+
+        # for Staging
+        url = "https://securegw-stage.paytm.in/theia/api/v1/initiateTransaction?mid={}&orderId={}"
+
         # for Production
-        # url = "https://securegw.paytm.in/theia/api/v1/initiateTransaction?mid=YOUR_MID_HERE&orderId="
-        response = requests.post(url, data = post_data, headers = {"Content-type": "application/json"}).json()
+        # url = "https://securegw.paytm.in/theia/api/v1/initiateTransaction?mid=YOUR_MID_HERE&orderId=ORDERID_98765"
+        response = requests.post(url.format(PAYTM_MERCHANT_ID,order_id), data = post_data, headers = {"Content-type": "application/json"}).json()
+        print("\n\n\n----------RESPOMSE IS:")
         print(response)
 
         payment_page={
             "mid":PAYTM_MERCHANT_ID,
             "txnToken":response['body']['txnToken'],
-            "orderId":paytmParams['body']['orderId']
-            
+            "orderId":order_id
         }
 
-        return render(request,"paytm.html",context={'paytm_params':payment_page, "order_id":paytmParams["body"]["orderId"]})
+        return render(request,"paytmredirect.html",context={ 'txnData':payment_page})
 
     form=UserForm()
     return render(request,"home.html",context={'form':form})
@@ -89,122 +94,29 @@ def starting_page(request):
     
 @csrf_exempt
 def handle_callback(request):
+    form = request.POST
+    param_dict= {}
+
+    order_id=request.POST.get('ORDERID')
+    payment_mode= request.POST.get('PAYMENTMODE')
+    transaction_id=request.POST.get('TXNID')
+    bank_transaction_id=request.POST.get('BANKTXNID')
+    transaction_date=request.POST.get('TXNDATE')
+
+    res_msg= request.POST.get('RESPMSG')
+    context={'error_message':res_msg}
     
-    HttpResponse("done ")
+    if res_msg!= 'Txn Success':
+        return render(request,"paymentsuccess.html", context)
 
+    for i in form.keys():
+        param_dict[i]=form[i]
 
-def OAuth_token(request):
+    checksum=request.POST.get('CHECKSUMHASH')
+    isVerifySignature = PaytmChecksum.verifySignature(param_dict,PAYTM_MERCHANT_KEY,checksum)
+        
+    if isVerifySignature==False:
+        return render(request,"paymentfail.html")
+        
+    return render(request,"paymentsuccess.html")
 
-    paytmParams = dict()
-
-    paytmParams["grantType"] = "authorization_code"
-    paytmParams["cpde"]      = "999e3877-97c1-XXXX-b19d-6c8787983300"
-    paytmParams["deviceId"]  = "Device123"
-
-    post_data = json.dumps(paytmParams)
-
-    auth = "Basic " + base64.b64encode("CLIENT_ID" + ":" + "CLIENT_SECRET")
-
-    # for Staging
-    url = "https://accounts-uat.paytm.com/oauth2/v3/token/sv1/"
-
-    # for Production
-    # url = "https://accounts.paytm.com/oauth2/v3/token/sv1/"
-    response = requests.post(url, data = post_data, headers = {"Authorization": auth,"Content-type": "application/json"}).json()
-    print(response)   
-
-
-def initiate_transaction_API(request):
-
-    paytmParams = dict()
-
-    paytmParams["body"] = {
-        "requestType"   : "Payment",
-        "mid"           : PAYTM_MERCHANT_ID,
-        "websiteName"   : "WEBSTAGE",
-        "orderId"       : "ORDERID_98765",
-        "callbackUrl"   : "https://<callback URL to be used by merchant>",
-        "txnAmount"     : {
-            "value"     : "",
-            "currency"  : "INR",
-        },
-        "userInfo"      : {
-            "custId"    : "CUST_001",
-        },
-    }
-
-    # Generate checksum by parameters we have in body
-    # Find your Merchant Key in your Paytm Dashboard at https://dashboard.paytm.com/next/apikeys 
-    checksum = PaytmChecksum.generateSignature(json.dumps(paytmParams["body"]), "YOUR_MERCHANT_KEY")
-
-    paytmParams["head"] = {
-        "signature"    : checksum
-    }
-
-    post_data = json.dumps(paytmParams)
-
-    # for Staging
-    url = "https://securegw-stage.paytm.in/theia/api/v1/initiateTransaction?mid=YOUR_MID_HERE&orderId=ORDERID_98765"
-
-    # for Production
-    # url = "https://securegw.paytm.in/theia/api/v1/initiateTransaction?mid=YOUR_MID_HERE&orderId=ORDERID_98765"
-    response = requests.post(url, data = post_data, headers = {"Content-type": "application/json"}).json()
-    print(response)
-    
-
-
-def fetch_payments(request):
-    
-    paytmParams = dict()
-
-    paytmParams["head"] = {
-        "txnToken" : "f0bed899539742309eebd8XXXX7edcf61588842333227"
-    }
-
-    post_data = json.dumps(paytmParams)
-
-    # for Staging
-    url = "https://securegw-stage.paytm.in/fetchPaymentOptions?mid=YOUR_MID_HERE&orderId=ORDERID_98765"
-
-    # for Production
-    # url = "https://securegw.paytm.in/fetchPaymentOptions?mid=YOUR_MID_HERE&orderId=ORDERID_98765"
-
-    response = requests.post(url, data = post_data, headers = {"Content-type": "application/json"}).json()
-    print(response)
-
-
-
-def transaction_status(request):
-    paytmParams = dict()
-
-    # body parameters
-    paytmParams["body"] = {
-
-        # Find your MID in your Paytm Dashboard at https://dashboard.paytm.com/next/apikeys
-        "mid" : "YOUR_MID_HERE",
-
-        # Enter your order id which needs to be check status for
-        "orderId" : "YOUR_ORDER_ID",
-    }
-
-    # Generate checksum by parameters we have in body
-    # Find your Merchant Key in your Paytm Dashboard at https://dashboard.paytm.com/next/apikeys 
-    checksum = PaytmChecksum.generateSignature(json.dumps(paytmParams["body"]), "YOUR_MERCHANT_KEY")
-
-    # head parameters
-    paytmParams["head"] = {
-
-        # put generated checksum value here
-        "signature"	: checksum
-    }
-
-    # prepare JSON string for request
-    post_data = json.dumps(paytmParams)
-
-    # for Staging
-    url = "https://securegw-stage.paytm.in/v3/order/status"
-
-    # for Production
-    # url = "https://securegw.paytm.in/v3/order/status"
-
-    response = requests.post(url, data = post_data, headers = {"Content-type": "application/json"}).json()
